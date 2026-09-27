@@ -2,9 +2,20 @@ import mongoose from 'mongoose';
 
 const HotelSchema = new mongoose.Schema({
   hotel_name: { type: String, required: true, trim: true },
+  registration_number: { type: String, required: true, trim: true, unique: true, index: true },
+  hotel_type: { type: String, trim: true },
+  number_of_rooms: { type: Number, min: 0 },
+  street_address: { type: String, trim: true },
+  city: { type: String, trim: true },
+  state: { type: String, trim: true },
+  pin_zip: { type: String, trim: true },
+  country: { type: String, trim: true },
+  contact_person: { type: String, trim: true },
+  phone: { type: String, trim: true },
   location: { type: String, trim: true },
   contact: { type: String, trim: true },
-  registration_number: { type: String, trim: true, index: true },
+  email: { type: String, required: true, lowercase: true, trim: true, unique: true, index: true },
+  password_hash: { type: String, required: true, select: false },
 }, { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } });
 
 const EvidencePackageSchema = new mongoose.Schema({

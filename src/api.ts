@@ -27,7 +27,71 @@ export type Hotel = {
   location?: string;
   contact?: string;
   registration_number?: string;
+  hotel_type?: string;
+  number_of_rooms?: number;
+  street_address?: string;
+  city?: string;
+  state?: string;
+  pin_zip?: string;
+  country?: string;
+  contact_person?: string;
+  phone?: string;
+  email?: string;
 };
+
+const TOKEN_KEY = 'greentrust_token';
+const HOTEL_KEY = 'greentrust_hotel';
+
+export function getToken(): string | null {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+
+export function getStoredHotel(): Hotel | null {
+  try { const raw = localStorage.getItem(HOTEL_KEY); return raw ? JSON.parse(raw) as Hotel : null; } catch { return null; }
+}
+
+export function setSession(token: string, hotel: Hotel): void {
+  try { localStorage.setItem(TOKEN_KEY, token); localStorage.setItem(HOTEL_KEY, JSON.stringify(hotel)); } catch { /* ignore */ }
+}
+
+export function clearSession(): void {
+  try { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(HOTEL_KEY); } catch { /* ignore */ }
+}
+
+export async function registerHotel(data: Record<string, string>): Promise<{ token: string; hotel: Hotel }> {
+  const res = await apiFetch<{ token: string; hotel: Hotel }>('/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  setSession(res.token, res.hotel);
+  return res;
+}
+
+export async function loginHotel(email: string, password: string): Promise<{ token: string; hotel: Hotel }> {
+  const res = await apiFetch<{ token: string; hotel: Hotel }>('/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  setSession(res.token, res.hotel);
+  return res;
+}
+
+export async function fetchMe(): Promise<Hotel | null> {
+  const token = getToken();
+  if (!token) return null;
+  try {
+    const res = await apiFetch<{ hotel: Hotel }>('/auth/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    setSession(token, res.hotel);
+    return res.hotel;
+  } catch {
+    clearSession();
+    return null;
+  }
+}
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
@@ -117,7 +181,10 @@ function mapDocument(raw: any, pkgName?: string): DocumentItem {
 }
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, options);
+  const token = getToken();
+  const headers = new Headers(options?.headers || {});
+  if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (!res.ok) throw new Error(`API ${res.status}: ${await res.text().catch(() => res.statusText)}`);
   return res.json() as Promise<T>;
 }
@@ -174,7 +241,6 @@ export async function fetchDocumentDetail(documentId: string): Promise<DocumentI
 export async function uploadDocument(file: File, hotelId: string, packageType: string): Promise<DocumentItem> {
   const formData = new FormData();
   formData.append('file', file);
-  formData.append('hotel_id', hotelId);
   formData.append('package_type', packageType);
   const data = await apiFetch<{ document: any } & { message?: string }>('/documents/upload', { method: 'POST', body: formData });
   return mapDocument(data);

@@ -15,6 +15,7 @@ import {
   Leaf,
   ListChecks,
   Loader2,
+  LogOut,
   Menu,
   MoreHorizontal,
   Plus,
@@ -33,17 +34,26 @@ import {
   computePackageStats,
   type DocumentItem,
   type DocStatus,
+  type Hotel,
   type PackageInfo,
   type View,
   checkBackend,
-  ensureHotel,
+  clearSession,
   fetchDocuments,
   fetchDocumentDetail,
+  fetchMe,
   uploadDocument,
   getMockDocuments,
   createMockUpload,
   mockComplete,
 } from '@/api';
+import AuthScreen from '@/AuthScreen';
+
+function initials(name: string): string {
+  const parts = (name || '').trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return (parts[0] || 'HT').slice(0, 2).toUpperCase();
+}
 
 const packageMeta: Record<string, { description: string; icon: typeof ShieldCheck; color: string }> = {
   'Sustainability & Legal': { description: 'Policies, licenses, and sustainability commitments', icon: ShieldCheck, color: 'forest' },
@@ -71,31 +81,53 @@ function App() {
   const [uploadingPackage, setUploadingPackage] = useState<string>(PACKAGE_TYPES[1]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [hotel, setHotel] = useState<Hotel | null>(null);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [booting, setBooting] = useState(true);
   const hotelRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
+      setBooting(true);
       const online = await checkBackend();
       if (cancelled) return;
       setBackendOnline(online);
       if (online) {
-        const result = await ensureHotel();
+        const me = await fetchMe();
         if (cancelled) return;
-        if (result) {
-          hotelRef.current = result.hotelId;
+        if (me) {
+          setHotel(me);
+          hotelRef.current = me._id;
           try {
-            const docs = await fetchDocuments(result.hotelId);
+            const docs = await fetchDocuments(me._id);
             if (cancelled) return;
             if (docs.length > 0) setDocuments(docs);
           } catch { /* keep mock if fetch fails */
           }
         }
       }
+      setBooting(false);
       setLoading(false);
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  const handleAuthed = useCallback((h: Hotel) => {
+    setHotel(h);
+    hotelRef.current = h._id;
+    setView('dashboard');
+    setDocuments(getMockDocuments());
+    setLoading(false);
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    clearSession();
+    setHotel(null);
+    hotelRef.current = null;
+    setDocuments(getMockDocuments());
+    setView('dashboard');
+    setAuthMode('login');
   }, []);
 
   const refreshDocuments = useCallback(async () => {
@@ -140,7 +172,7 @@ function App() {
     }
 
     try {
-      const newDoc = await uploadDocument(file, hotelRef.current, uploadingPackage);
+      const newDoc = await uploadDocument(file, hotelRef.current!, uploadingPackage);
       setDocuments((cur) => [newDoc, ...cur]);
       setView('documents');
     } catch (err: any) {
@@ -167,6 +199,17 @@ function App() {
     }
   }, [backendOnline]);
 
+  if (booting) {
+    return <div className="loading-state" style={{ minHeight: '100vh' }}><Loader2 className="spin" size={28} /><p>Loading GreenTrust...</p></div>;
+  }
+
+  if (!hotel) {
+    return <AuthScreen mode={authMode} onAuthed={handleAuthed} onSwitchMode={setAuthMode} />;
+  }
+
+  const hotelName = hotel.hotel_name || 'Hotel';
+  const hotelInitials = initials(hotelName);
+
   return (
     <div className="app-shell">
       <aside className={`sidebar ${isMobileNavOpen ? 'sidebar-open' : ''}`}>
@@ -182,20 +225,21 @@ function App() {
         <div className="sidebar-spacer" />
         <div className="sidebar-note"><Leaf size={17} /><p><strong>Phase 1</strong><br />Evidence ingestion<br />& preprocessing</p></div>
         <button className={view === 'profile' ? 'nav-item active' : 'nav-item'} onClick={() => setView('profile')}><Settings2 size={19} /><span>Profile & settings</span></button>
-        <div className="account-chip"><div className="avatar">AM</div><div><strong>Azure Mornings</strong><span>Hotel workspace</span></div><MoreHorizontal size={18} /></div>
+        <button className="nav-item" onClick={handleLogout}><LogOut size={19} /><span>Sign out</span></button>
+        <div className="account-chip"><div className="avatar">{hotelInitials}</div><div><strong>{hotelName}</strong><span>Hotel workspace</span></div><MoreHorizontal size={18} /></div>
       </aside>
 
       <main className="main-content">
         <header className="topbar">
           <button className="icon-button menu-trigger" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation"><Menu size={21} /></button>
-          <div className="breadcrumb"><span>Azure Mornings</span><ChevronRight size={14} /><strong>{view === 'dashboard' ? 'Dashboard' : view === 'packages' ? 'Evidence Packages' : view === 'upload' ? 'Upload Document' : view === 'documents' ? 'My Documents' : 'Profile'}</strong></div>
+          <div className="breadcrumb"><span>{hotelName}</span><ChevronRight size={14} /><strong>{view === 'dashboard' ? 'Dashboard' : view === 'packages' ? 'Evidence Packages' : view === 'upload' ? 'Upload Document' : view === 'documents' ? 'My Documents' : 'Profile'}</strong></div>
           <div className="topbar-actions">
             <div className={`connection-badge ${backendOnline ? 'online' : 'offline'}`}>
               <i />{backendOnline ? 'Live' : 'Demo'}
             </div>
             <label className="search-box"><Search size={17} /><input value={search} onChange={(event: ChangeEvent<HTMLInputElement>) => setSearch(event.target.value)} placeholder="Search documents" /></label>
             <button className="notification-button" aria-label="Notifications"><Bell size={19} /><i /></button>
-            <div className="top-avatar">AM</div>
+            <div className="top-avatar">{hotelInitials}</div>
           </div>
         </header>
 
@@ -204,11 +248,11 @@ function App() {
             <div className="loading-state"><Loader2 className="spin" size={28} /><p>Connecting to GreenTrust backend...</p></div>
           ) : (
             <>
-              {view === 'dashboard' && <Dashboard documents={documents} packageStats={packageStats} onNavigate={setView} onOpen={openDocument} backendOnline={backendOnline} />}
+              {view === 'dashboard' && <Dashboard documents={documents} packageStats={packageStats} onNavigate={setView} onOpen={openDocument} backendOnline={backendOnline} hotelName={hotelName} />}
               {view === 'packages' && <Packages packageStats={packageStats} onNavigate={setView} />}
               {view === 'upload' && <UploadView isDragging={isDragging} setDragging={setDragging} handleFiles={handleFiles} uploadingPackage={uploadingPackage} setUploadingPackage={setUploadingPackage} uploadError={uploadError} uploading={uploading} backendOnline={backendOnline} />}
               {view === 'documents' && <Documents documents={filteredDocuments} onOpen={openDocument} onNavigate={setView} />}
-              {view === 'profile' && <Profile />}
+              {view === 'profile' && <Profile hotel={hotel} />}
             </>
           )}
         </div>
@@ -219,12 +263,14 @@ function App() {
   );
 }
 
-function Dashboard({ documents, packageStats, onNavigate, onOpen, backendOnline }: { documents: DocumentItem[]; packageStats: PackageInfo[]; onNavigate: (view: View) => void; onOpen: (doc: DocumentItem) => void; backendOnline: boolean }) {
+function Dashboard({ documents, packageStats, onNavigate, onOpen, backendOnline, hotelName }: { documents: DocumentItem[]; packageStats: PackageInfo[]; onNavigate: (view: View) => void; onOpen: (doc: DocumentItem) => void; backendOnline: boolean; hotelName: string }) {
   const processed = documents.filter((d) => d.status === 'Processed').length;
   const processing = documents.filter((d) => d.status === 'Processing').length;
   const failed = documents.filter((d) => d.status === 'Failed').length;
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   return <>
-    <section className="welcome-row"><div><p className="eyebrow">{new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p><h1>Good morning, Azure Mornings.</h1><p className="subheading">{backendOnline ? 'Connected to live backend. Your data is synced.' : 'Running in demo mode. Start the backend to use the full pipeline.'}</p></div><button className="primary-button" onClick={() => onNavigate('upload')}><Plus size={18} /> Upload evidence</button></section>
+    <section className="welcome-row"><div><p className="eyebrow">{new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p><h1>{greeting}, {hotelName}.</h1><p className="subheading">{backendOnline ? 'Connected to live backend. Your data is synced.' : 'Running in demo mode. Start the backend to use the full pipeline.'}</p></div><button className="primary-button" onClick={() => onNavigate('upload')}><Plus size={18} /> Upload evidence</button></section>
     <section className="stat-grid"><StatCard label="Total documents" value={documents.length} detail="Across all packages" icon={FileText} tone="green" /><StatCard label="Processed" value={processed} detail="Ready for review" icon={CheckCircle2} tone="teal" /><StatCard label="Processing" value={processing} detail="Usually under 2 min" icon={Clock3} tone="amber" /><StatCard label="Failed" value={failed} detail="Needs your attention" icon={XCircle} tone="red" /></section>
     <section className="section-heading"><div><p className="eyebrow">YOUR WORKSPACE</p><h2>Evidence packages</h2></div><button className="text-button" onClick={() => onNavigate('packages')}>View all packages <ChevronRight size={16} /></button></section>
     <div className="package-grid">{packageStats.map((item) => <PackageCard key={item.name} item={item} onClick={() => onNavigate('packages')} />)}</div>
@@ -276,7 +322,12 @@ function UploadView({ isDragging, setDragging, handleFiles, uploadingPackage, se
   </>;
 }
 
-function Profile() { return <><section className="welcome-row compact"><div><p className="eyebrow">WORKSPACE SETTINGS</p><h1>Profile</h1><p className="subheading">Manage your hotel workspace details.</p></div></section><div className="profile-card"><div className="profile-banner" /><div className="profile-body"><div className="profile-avatar">AM</div><h2>Azure Mornings</h2><p>Hotel workspace · Kochi, Kerala</p><div className="profile-fields"><div><span>Contact email</span><strong>operations@azuremornings.com</strong></div><div><span>Registration number</span><strong>AM-HOTEL-2026-014</strong></div></div></div></div></>; }
+function Profile({ hotel }: { hotel: Hotel }) {
+  const name = hotel.hotel_name || 'Hotel';
+  const initialsVal = initials(name);
+  const locationStr = [hotel.city, hotel.state, hotel.country].filter(Boolean).join(', ') || '—';
+  return <><section className="welcome-row compact"><div><p className="eyebrow">WORKSPACE SETTINGS</p><h1>Profile</h1><p className="subheading">Manage your hotel workspace details.</p></div></section><div className="profile-card"><div className="profile-banner" /><div className="profile-body"><div className="profile-avatar">{initialsVal}</div><h2>{name}</h2><p>Hotel workspace · {locationStr}</p><div className="profile-fields"><div><span>Contact email</span><strong>{hotel.email || '—'}</strong></div><div><span>Registration number</span><strong>{hotel.registration_number || '—'}</strong></div><div><span>Contact person</span><strong>{hotel.contact_person || '—'}</strong></div><div><span>Phone</span><strong>{hotel.phone || '—'}</strong></div><div><span>Hotel type</span><strong>{hotel.hotel_type || '—'}</strong></div><div><span>Number of rooms</span><strong>{hotel.number_of_rooms ?? '—'}</strong></div><div><span>Street address</span><strong>{hotel.street_address || '—'}</strong></div><div><span>PIN / ZIP</span><strong>{hotel.pin_zip || '—'}</strong></div></div></div></div></>;
+}
 
 function DetailList({ icon: Icon, title, items }: { icon: typeof Tag; title: string; items: string[] }) {
   if (!items || items.length === 0) return null;

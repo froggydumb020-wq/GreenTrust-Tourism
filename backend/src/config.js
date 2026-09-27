@@ -8,6 +8,8 @@ export const config = {
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
   uploadDir: process.env.UPLOAD_DIR || 'uploads',
   maxFileSize: (parseInt(process.env.MAX_FILE_SIZE_MB || '20', 10)) * 1024 * 1024,
+  jwtSecret: process.env.JWT_SECRET || 'greentrust-dev-secret-change-me-in-production',
+  jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
 };
 
 const allowedMimes = new Map([
