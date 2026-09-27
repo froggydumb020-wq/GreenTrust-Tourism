@@ -87,7 +87,7 @@ export default function AuthScreen({ mode, onAuthed, onSwitchMode }: Props) {
 
   return (
     <div className="auth-shell">
-      <div className="auth-bg" style={{ backgroundImage: "url('/ChatGPT_Image_Sep_27,_2026,_01_22_10_PM.png')" }} />
+      <div className="auth-bg" style={{ backgroundImage: `url('/${isRegister ? 'registerpage' : 'loginpage'}.png')` }} />
       <div className="auth-overlay" />
 
       <div className="auth-card-wrap">

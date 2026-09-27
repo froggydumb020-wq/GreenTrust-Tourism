@@ -49,7 +49,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(39, 132, 91,
 
 .auth-shell { position: relative; min-height: 100vh; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .auth-bg { position: absolute; inset: 0; background-size: cover; background-position: center; z-index: 0; }
-.auth-overlay { position: absolute; inset: 0; z-index: 1; background: linear-gradient(135deg, rgba(16,60,49,.82), rgba(34,112,79,.55) 50%, rgba(20,80,60,.72)); }
+.auth-overlay { position: absolute; inset: 0; z-index: 1; background: linear-gradient(135deg, rgba(16,60,49,.35), rgba(20,40,30,.25) 50%, rgba(16,60,49,.35)); }
 .auth-card-wrap { position: relative; z-index: 2; width: 100%; max-width: 540px; padding: 24px; }
 .auth-card { background: #fff; border-radius: 16px; padding: 38px 36px 34px; box-shadow: 0 24px 60px rgba(10,40,30,.28); max-height: calc(100vh - 48px); overflow-y: auto; }
 .auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
