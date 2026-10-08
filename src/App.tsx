@@ -36,8 +36,11 @@ import {
   computePackageStats,
   type DocumentItem,
   type DocStatus,
+  type Financial,
   type Hotel,
+  type Measurement,
   type PackageInfo,
+  type PolicySection,
   type View,
   checkBackend,
   clearSession,
@@ -442,38 +445,106 @@ function DetailList({ icon: Icon, title, items }: { icon: typeof Tag; title: str
 function KeyValueGrid({ fields }: { fields: Record<string, string> }) {
   const entries = Object.entries(fields);
   if (entries.length === 0) return null;
-  return <div className="detail-section"><h3>Key-value fields</h3><div className="kv-grid">{entries.map(([key, value]) => <div key={key} className="kv-item"><span>{key.replace(/_/g, ' ')}</span><strong>{value}</strong></div>)}</div></div>;
+  return <div className="detail-section"><h3>Key data</h3><div className="kv-grid">{entries.map(([key, value]) => <div key={key} className="kv-item"><span>{key.replace(/_/g, ' ')}</span><strong>{value}</strong></div>)}</div></div>;
+}
+
+function MeasurementList({ items }: { items: Measurement[] }) {
+  if (!items || items.length === 0) return null;
+  return <div className="detail-section"><h3>Measurements</h3><div className="kv-grid">{items.map((item, i) => <div key={i} className="kv-item"><span>{item.label || 'Value'}</span><strong>{item.value} {item.unit}</strong></div>)}</div></div>;
+}
+
+function FinancialList({ items }: { items: Financial[] }) {
+  if (!items || items.length === 0) return null;
+  return <div className="detail-section"><h3>Financial values</h3><div className="kv-grid">{items.map((item, i) => <div key={i} className="kv-item"><span>{item.label || 'Amount'}</span><strong>{item.currency} {item.amount.toLocaleString()}</strong></div>)}</div></div>;
+}
+
+function SectionList({ items }: { items: PolicySection[] }) {
+  if (!items || items.length === 0) return null;
+  return <div className="detail-section"><h3>Policy sections</h3><div className="commitment-list">{items.map((item, i) => <div key={i} className="commitment-item"><span className="commitment-num">{item.number || '§'}</span><span>{item.heading}</span></div>)}</div></div>;
+}
+
+function CommitmentList({ items }: { items: string[] }) {
+  if (!items || items.length === 0) return null;
+  return <div className="detail-section"><h3>Key commitments</h3><div className="commitment-list">{items.map((item, i) => <div key={i} className="commitment-item"><ListChecks size={14} /><span>{item}</span></div>)}</div></div>;
+}
+
+function ExcerptList({ items }: { items: string[] }) {
+  if (!items || items.length === 0) return null;
+  return <div className="detail-section"><h3>Key excerpts</h3><div className="excerpt-list">{items.map((item, i) => <p key={i}>{item}</p>)}</div></div>;
 }
 
 function DocumentDetails({ document, onClose }: { document: DocumentItem; onClose: () => void }) {
-  const structured = document.structuredData as Record<string, unknown> | undefined;
+  const structured = document.structuredData;
+  const meta = document.metadata;
+  const isProcessed = document.status === 'Processed';
+  const isFailed = document.status === 'Failed';
+
   const structuredJson = structured
     ? JSON.stringify(structured, null, 2)
-    : JSON.stringify({ document_information: { file_name: document.name, file_type: document.type.toLowerCase() }, summary: 'Processing complete.', metadata: { extraction_method: document.method, page_count: document.pages, word_count: document.words } }, null, 2);
-  const meta = document.metadata as Record<string, unknown> | undefined;
-  const detectedDates = (meta?.detected_dates as string[]) || (structured?.detected_dates as string[]) || [];
-  const measurements = (meta?.detected_measurements as string[]) || (structured?.detected_measurements as string[]) || [];
-  const monetary = (meta?.monetary_amounts as string[]) || (structured?.monetary_amounts as string[]) || [];
-  const keyValues = (meta?.key_value_fields as Record<string, string>) || (structured?.key_value_fields as Record<string, string>) || {};
-  const relevantTerms = (structured?.relevant_detected_terms as string[]) || [];
+    : JSON.stringify({ document: { file_name: document.name, file_type: document.type.toLowerCase() }, summary: 'Processing complete.', metadata: { extraction_method: document.method, page_count: document.pages, word_count: document.words } }, null, 2);
+
+  const dates = structured?.dates || meta?.detected_dates || [];
+  const measurements = structured?.measurements || [];
+  const financials = structured?.financials || [];
+  const keyData = structured?.key_data || {};
+  const relevantTerms = structured?.relevant_terms || meta?.relevant_detected_terms || [];
+  const sustainabilityTopics = structured?.sustainability_topics || [];
+  const policySections = structured?.policy_sections || [];
+  const keyCommitments = structured?.key_commitments || [];
+  const keyExcerpts = structured?.key_excerpts || [];
+  const summary = structured?.summary;
+  const docInfo = structured?.document;
+  const docType = structured?.document_type;
+  const title = structured?.title;
+  const organization = structured?.organization;
+
   return <div className="modal-backdrop" onClick={onClose}><aside className="details-drawer" onClick={(e) => e.stopPropagation()}>
     <div className="drawer-header"><div><p className="eyebrow">DOCUMENT DETAILS</p><h2>{document.name}</h2></div><button className="icon-button" onClick={onClose} aria-label="Close details"><X size={20} /></button></div>
     <div className="drawer-status"><StatusPill status={document.status} /><span>Uploaded {document.uploaded}</span></div>
-    {document.status === 'Failed' && document.errorMessage && <div className="detail-error"><AlertCircle size={16} /> {document.errorMessage}</div>}
-    <div className="detail-section"><h3>Extracted text</h3><div className="text-preview">{document.extractedText || (document.status === 'Processed' ? 'No text was extracted from this document.' : 'Text will appear here once processing is complete.')}</div></div>
-    {document.status === 'Processed' && <KeyValueGrid fields={keyValues} />}
-    {document.status === 'Processed' && <DetailList icon={Calendar} title="Detected dates" items={detectedDates} />}
-    {document.status === 'Processed' && <DetailList icon={Ruler} title="Measurements" items={measurements} />}
-    {document.status === 'Processed' && <DetailList icon={Banknote} title="Monetary amounts" items={monetary} />}
-    {document.status === 'Processed' && <DetailList icon={Tag} title="Relevant terms" items={relevantTerms} />}
+
+    {isFailed && document.errorMessage && <div className="detail-error"><AlertCircle size={16} /> {document.errorMessage}</div>}
+
+    {isProcessed && title && title !== document.name && <div className="detail-section"><h3>Title</h3><div className="text-preview">{title}</div></div>}
+
+    {isProcessed && summary && <div className="detail-section"><h3>Summary</h3><div className="text-preview">{summary}</div></div>}
+
+    <div className="detail-section"><h3>Extracted text</h3><div className="text-preview">{document.extractedText || (isProcessed ? 'No text was extracted from this document.' : 'Text will appear here once processing is complete.')}</div></div>
+
+    {isProcessed && docType && <div className="detail-section"><h3>Document type</h3><div className="tag-list"><span className="extracted-tag"><Tag size={11} /> {docType.replace(/_/g, ' ')}</span></div></div>}
+
+    {isProcessed && organization && <div className="detail-section"><h3>Organization</h3><div className="text-preview">{organization}</div></div>}
+
+    {isProcessed && Object.keys(keyData).length > 0 && <KeyValueGrid fields={keyData} />}
+
+    {isProcessed && <DetailList icon={Calendar} title="Dates" items={dates} />}
+
+    {isProcessed && <MeasurementList items={measurements} />}
+
+    {isProcessed && <FinancialList items={financials} />}
+
+    {isProcessed && <DetailList icon={Tag} title="Relevant terms" items={relevantTerms} />}
+
+    {isProcessed && <DetailList icon={Sparkles} title="Sustainability topics" items={sustainabilityTopics} />}
+
+    {isProcessed && <SectionList items={policySections} />}
+
+    {isProcessed && <CommitmentList items={keyCommitments} />}
+
+    {isProcessed && <ExcerptList items={keyExcerpts} />}
+
     <div className="detail-section"><h3>Structured JSON</h3><pre>{structuredJson}</pre></div>
+
     <div className="detail-section"><h3>Metadata</h3><div className="metadata-grid">
       <span>File type<strong>{document.type}</strong></span>
-      <span>Pages<strong>{document.pages || (meta?.page_count as number) || '—'}</strong></span>
-      <span>Word count<strong>{document.words || (meta?.word_count as number) || '—'}</strong></span>
-      <span>Extraction<strong>{document.method}</strong></span>
-      <span>Processed at<strong>{meta?.processed_timestamp ? new Date(meta.processed_timestamp as string).toLocaleString() : document.uploaded}</strong></span>
+      <span>Pages<strong>{docInfo?.page_count || meta?.page_count || document.pages || '—'}</strong></span>
+      <span>Word count<strong>{meta?.word_count || document.words || '—'}</strong></span>
+      <span>Line count<strong>{meta?.line_count ?? '—'}</strong></span>
+      <span>Extraction method<strong>{document.method}</strong></span>
+      <span>Confidence<strong>{document.confidence != null ? `${Math.round(document.confidence * 100)}%` : '—'}</strong></span>
+      <span>Processed at<strong>{meta?.processed_timestamp ? new Date(meta.processed_timestamp).toLocaleString() : document.uploaded}</strong></span>
+      <span>File size<strong>{document.size}</strong></span>
     </div></div>
+
     <div className="hash-block"><span>SHA-256 integrity hash</span><strong>{document.hash}</strong></div>
   </aside></div>;
 }

@@ -2,6 +2,60 @@ export type DocStatus = 'Processed' | 'Processing' | 'Failed';
 
 export type View = 'dashboard' | 'packages' | 'upload' | 'documents' | 'profile';
 
+export type Measurement = {
+  value: number | string;
+  unit: string;
+  label?: string;
+};
+
+export type Financial = {
+  amount: number;
+  currency: string;
+  label?: string;
+};
+
+export type PolicySection = {
+  heading: string;
+  number?: string;
+};
+
+export type StructuredData = {
+  document?: { file_name: string; file_type: string; page_count: number };
+  document_type?: string;
+  title?: string;
+  organization?: string;
+  summary?: string;
+  key_data?: Record<string, string>;
+  measurements?: Measurement[];
+  financials?: Financial[];
+  dates?: string[];
+  relevant_terms?: string[];
+  sustainability_topics?: string[];
+  policy_sections?: PolicySection[];
+  key_commitments?: string[];
+  key_excerpts?: string[];
+  metadata?: {
+    word_count?: number;
+    line_count?: number;
+    extraction_method?: string;
+    processed_timestamp?: string;
+  };
+};
+
+export type ProcessorMetadata = {
+  file_type?: string;
+  page_count?: number;
+  word_count?: number;
+  line_count?: number;
+  detected_dates?: string[];
+  detected_measurements?: string[];
+  monetary_amounts?: string[];
+  key_value_fields?: Record<string, string>;
+  relevant_detected_terms?: string[];
+  extraction_method?: string;
+  processed_timestamp?: string;
+};
+
 export type DocumentItem = {
   id: string;
   name: string;
@@ -15,10 +69,11 @@ export type DocumentItem = {
   method: string;
   pages: number;
   words: number;
+  confidence?: number;
   errorMessage?: string;
   extractedText?: string;
-  structuredData?: unknown;
-  metadata?: Record<string, unknown>;
+  structuredData?: StructuredData;
+  metadata?: ProcessorMetadata;
 };
 
 export type Hotel = {
@@ -158,8 +213,8 @@ function mapStatus(status: string): DocStatus {
 }
 
 function mapDocument(raw: any, pkgName?: string): DocumentItem {
-  const meta = raw.extracted_data?.metadata || {};
-  const structured = raw.extracted_data?.structured_data || {};
+  const meta = (raw.extracted_data?.metadata || {}) as ProcessorMetadata;
+  const structured = (raw.extracted_data?.structured_data || {}) as StructuredData;
   return {
     id: raw.document?.document_id || raw.document_id || 'unknown',
     name: raw.document?.file_name || raw.file_name || 'Untitled',
@@ -173,6 +228,7 @@ function mapDocument(raw: any, pkgName?: string): DocumentItem {
     method: meta.extraction_method || raw.document?.error_message || 'Processing...',
     pages: meta.page_count || 0,
     words: meta.word_count || 0,
+    confidence: raw.extracted_data?.confidence,
     errorMessage: raw.document?.error_message,
     extractedText: raw.extracted_data?.extracted_text,
     structuredData: structured,
