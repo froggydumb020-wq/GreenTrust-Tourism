@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 """
-GreenTrust Module 1 Evaluation — Ground Truth Builder
+GreenTrust Module 1 Evaluation — Ground Truth Builder (Candidate Generator)
 
-Independently extracts and detects information from test documents
-WITHOUT calling the GreenTrust processor. Produces ground_truth.json
-for later comparison with processor output.
+Independently extracts and detects information from ORIGINAL test documents
+WITHOUT calling the GreenTrust processor. Acts as a candidate generator:
+produces ground_truth.json for human review/verification before evaluation.
+
+IMPORTANT: This tool NEVER uses Module 1 output to create ground truth.
+It reads the original document files directly using PyMuPDF, python-docx,
+and Tesseract OCR — completely separate from the processor.
 
 Usage:
-    python build_ground_truth.py                # interactive review
-    python build_ground_truth.py --auto-accept  # skip review
+    python build_ground_truth.py                # interactive review (recommended)
+    python build_ground_truth.py --auto-accept  # skip review (for quick runs)
+
+After generation, REVIEW and CORRECT ground_truth.json as needed.
+The detected values are CANDIDATES — you must verify them against the
+original documents before running evaluate.py.
 """
 
 import argparse
@@ -97,7 +105,6 @@ KEY_VALUE_PATTERN = re.compile(
 
 NOISE_LINE_PATTERN = re.compile(r"^(?:[\W_]|[-_=*]){3,}$")
 
-# Hotel/property name patterns
 HOTEL_NAME_PATTERN = re.compile(
     r"(?:hotel|resort|villa|lodge|guest\s*house|homestay|boutique|eco\s*lodge|serviced\s*apartment)"
     r"[\s:]+([A-Z][A-Za-z0-9\s&'.,-]{2,60})",
@@ -158,34 +165,28 @@ def clean_text(raw: str) -> str:
 
 
 # =========================================================
-# INDEPENDENT DOCUMENT EXTRACTION
+# INDEPENDENT DOCUMENT EXTRACTION (NOT through processor)
 # =========================================================
 
 def extract_pdf(file_path: Path) -> Dict:
-    """Extract text from PDF using PyMuPDF with OCR fallback."""
     buf = file_path.read_bytes()
     doc = fitz.open(stream=buf, filetype="pdf")
     pages_text = []
-
     for page in doc:
         text = page.get_text("text")
         if text.strip():
             pages_text.append(text)
             continue
-
-        # OCR fallback for image-only pages
         pix = page.get_pixmap(dpi=200)
         img = Image.open(io.BytesIO(pix.tobytes("png")))
         ocr_text = pytesseract.image_to_string(img)
         pages_text.append(ocr_text)
-
     page_count = doc.page_count
     doc.close()
     return {"text": "\n".join(pages_text), "page_count": page_count}
 
 
 def extract_docx(file_path: Path) -> Dict:
-    """Extract text from DOCX."""
     doc = DocxDocument(str(file_path))
     parts = []
     for para in doc.paragraphs:
@@ -196,21 +197,16 @@ def extract_docx(file_path: Path) -> Dict:
             cells = [c.text.strip() for c in row.cells if c.text.strip()]
             if cells:
                 parts.append(" | ".join(cells))
-    return {
-        "text": "\n".join(parts),
-        "page_count": max(1, len(parts) // 45 + 1),
-    }
+    return {"text": "\n".join(parts), "page_count": max(1, len(parts) // 45 + 1)}
 
 
 def extract_image(file_path: Path) -> Dict:
-    """Extract text from image using Tesseract OCR."""
     img = Image.open(str(file_path))
     text = pytesseract.image_to_string(img)
     return {"text": text, "page_count": 1}
 
 
 def extract_document(file_path: Path) -> Optional[Dict]:
-    """Route to correct extractor based on file extension."""
     ext = file_path.suffix.lower()
     try:
         if ext == ".pdf":
@@ -230,7 +226,7 @@ def extract_document(file_path: Path) -> Optional[Dict]:
 
 
 # =========================================================
-# FIELD DETECTION
+# FIELD DETECTION (candidates for ground truth)
 # =========================================================
 
 def detect_dates(text: str) -> List[str]:
@@ -250,32 +246,25 @@ def detect_measurements(text: str) -> List[Dict]:
                 value = int(value)
         except ValueError:
             continue
-
         unit = m.group(2)
         key = (value, unit.lower())
-
         if key in seen:
             continue
         seen.add(key)
-
         results.append({"value": value, "unit": unit})
-
     return results[:30]
 
 
 def detect_financials(text: str) -> List[Dict]:
     results = []
     seen = set()
-
     currency_map = {
         "₹": "INR", "rs": "INR", "rs.": "INR", "inr": "INR",
         "$": "USD", "usd": "USD",
         "€": "EUR", "eur": "EUR",
         "£": "GBP", "gbp": "GBP",
-        "₽": "RUB",
-        "aed": "AED", "aud": "AUD", "cad": "CAD",
+        "₽": "RUB", "aed": "AED", "aud": "AUD", "cad": "CAD",
     }
-
     for m in MONEY_PATTERN.finditer(text):
         if m.group("currency"):
             raw_currency = m.group("currency")
@@ -283,23 +272,21 @@ def detect_financials(text: str) -> List[Dict]:
         else:
             raw_currency = m.group("currency_after")
             amount_str = m.group("amount_after")
-
         try:
             amount = float(amount_str.replace(",", ""))
             if amount.is_integer():
                 amount = int(amount)
         except (ValueError, AttributeError):
             continue
-
-        currency = currency_map.get(raw_currency.strip().lower(), raw_currency.upper() if raw_currency.isalpha() else "INR")
-
+        currency = currency_map.get(
+            raw_currency.strip().lower(),
+            raw_currency.upper() if raw_currency.isalpha() else "INR",
+        )
         key = (amount, currency)
         if key in seen:
             continue
         seen.add(key)
-
         results.append({"amount": amount, "currency": currency})
-
     return results[:30]
 
 
@@ -310,7 +297,6 @@ def normalize_key(label: str) -> str:
 def detect_key_values(text: str) -> Dict[str, str]:
     fields: Dict[str, str] = {}
     ignored_keys = {"amount", "note", "consumption", "demand"}
-
     for line in text.split("\n"):
         m = KEY_VALUE_PATTERN.match(line)
         if not m:
@@ -327,24 +313,18 @@ def detect_key_values(text: str) -> Dict[str, str]:
 
 
 def detect_hotel_name(text: str, key_values: Dict[str, str]) -> Optional[str]:
-    # Check key-value fields first
     for k in PROPERTY_NAME_KEYS:
         if k in key_values:
             return key_values[k]
-
-    # Search in text
     m = HOTEL_NAME_PATTERN.search(text)
     if m:
         return m.group(1).strip()
-
-    # Look for ALL-CAPS lines that look like hotel names
     for line in text.split("\n"):
         line = line.strip()
         if len(line) > 5 and line.isupper() and any(
             w in line.lower() for w in ["hotel", "resort", "villa", "lodge"]
         ):
             return line
-
     return None
 
 
@@ -358,12 +338,11 @@ def find_relevant_terms(text: str) -> List[str]:
 
 
 # =========================================================
-# BUILD GROUND TRUTH ENTRY
+# BUILD CANDIDATE GROUND TRUTH ENTRY
 # =========================================================
 
 def build_entry(file_path: Path, extraction: Dict) -> Dict:
     text = extraction["cleaned_text"]
-
     dates = detect_dates(text)
     measurements = detect_measurements(text)
     financials = detect_financials(text)
@@ -384,28 +363,24 @@ def build_entry(file_path: Path, extraction: Dict) -> Dict:
     if hotel_name:
         entry["key_data"]["hotel_name"] = hotel_name
 
-    # Include other key-value fields (excluding hotel_name to avoid dup)
     for k, v in key_values.items():
         if k not in PROPERTY_NAME_KEYS:
             entry["key_data"][k] = v
 
-    # Include optional expected_text if text was extracted
     if text.strip():
-        entry["expected_text"] = text[:5000]  # cap for practical review
+        entry["expected_text"] = text[:5000]
 
     return entry
 
 
 # =========================================================
-# INTERACTIVE REVIEW
+# INTERACTIVE REVIEW (verification step)
 # =========================================================
 
 def review_entry(file_name: str, entry: Dict) -> Dict:
-    """Show detected values and let user edit or accept."""
     print("\n" + "=" * 60)
-    print(f"  {file_name}")
+    print(f"  {file_name}  —  CANDIDATE VALUES (verify against original)")
     print("=" * 60)
-
     print(f"\n  Dates:          {entry['dates']}")
     print(f"  Measurements:   {entry['measurements']}")
     print(f"  Financials:     {entry['financials']}")
@@ -424,7 +399,6 @@ def review_entry(file_name: str, entry: Dict) -> Dict:
 
 
 def edit_interactive(entry: Dict) -> Dict:
-    """Simple JSON-based editing."""
     print("\n  Current entry (JSON):")
     print(json.dumps(entry, indent=2, ensure_ascii=False))
     print("\n  Paste replacement JSON, or press Enter to keep current:")
@@ -437,7 +411,6 @@ def edit_interactive(entry: Dict) -> Dict:
             lines.append(line)
     except EOFError:
         pass
-
     if lines:
         try:
             new_entry = json.loads("\n".join(lines))
@@ -453,7 +426,6 @@ def edit_interactive(entry: Dict) -> Dict:
 # =========================================================
 
 def discover_documents() -> List[Path]:
-    """Find all supported test documents."""
     docs = []
     if not TEST_DOCS_DIR.exists():
         return docs
@@ -465,17 +437,18 @@ def discover_documents() -> List[Path]:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Build ground truth for GreenTrust Module 1 evaluation"
+        description="Build ground truth (candidate generator) for GreenTrust Module 1 evaluation"
     )
     parser.add_argument(
         "--auto-accept",
         action="store_true",
-        help="Skip interactive review and auto-accept all detected values",
+        help="Skip interactive review and auto-accept candidate values",
     )
     args = parser.parse_args()
 
     print("\n" + "=" * 60)
-    print("  GreenTrust Module 1 — Ground Truth Builder")
+    print("  GreenTrust Module 1 — Ground Truth Candidate Generator")
+    print("  (Reads ORIGINAL documents — NEVER calls Module 1)")
     print("=" * 60)
 
     docs = discover_documents()
@@ -522,13 +495,14 @@ def main():
                 print(f"  [SKIPPED]")
                 skipped += 1
 
-    # Write ground truth
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(ground_truth, f, indent=2, ensure_ascii=False)
 
     print("\n" + "=" * 60)
     print(f"  Ground truth written to: {OUTPUT_FILE}")
     print(f"  Documents: {len(ground_truth)} accepted, {skipped} skipped")
+    if not args.auto_accept:
+        print("  REVIEW the file before running evaluate.py.")
     print("=" * 60 + "\n")
 
 
