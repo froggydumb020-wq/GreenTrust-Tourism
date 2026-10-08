@@ -134,10 +134,96 @@ WATER_TERMS = {
     "meter",
 }
 
+SUSTAINABILITY_ENVIRONMENTAL_TERMS = {
+    "sustainability",
+    "sustainable",
+    "environment",
+    "environmental",
+    "climate",
+    "carbon",
+    "emissions",
+    "waste",
+    "recycling",
+    "biodiversity",
+    "conservation",
+    "procurement",
+    "compliance",
+    "governance",
+    "renewable",
+    "deforestation",
+    "animal welfare",
+    "community",
+    "resource efficiency",
+}
+
+ALL_RELEVANT_TERMS = (
+    ENERGY_TERMS | WATER_TERMS | SUSTAINABILITY_ENVIRONMENTAL_TERMS
+)
+
 
 # =========================================================
-# TEXT CLEANING
+# SUSTAINABILITY TOPIC KEYWORD GROUPS
 # =========================================================
+
+SUSTAINABILITY_TOPICS: Dict[str, Set[str]] = {
+    "carbon_reduction": {"carbon footprint", "carbon reduction", "reduce carbon", "carbon neutral", "net zero", "co2 reduction"},
+    "climate": {"climate change", "climate action", "climate", "global warming", "greenhouse gas"},
+    "emissions": {"emission", "emissions", "co2", "ghg", "greenhouse"},
+    "energy_efficiency": {"energy efficiency", "energy conservation", "energy saving", "energy management", "energy performance"},
+    "renewable_energy": {"renewable energy", "solar", "wind", "biomass", "geothermal", "renewable"},
+    "water_conservation": {"water conservation", "water saving", "water efficiency", "water management", "reduce water"},
+    "wastewater": {"wastewater", "sewage", "effluent", "water treatment"},
+    "waste_management": {"waste management", "waste reduction", "waste disposal", "solid waste", "waste segregation"},
+    "recycling": {"recycling", "recycle", "recycled", "reuse", "upcycle"},
+    "sustainable_procurement": {"sustainable procurement", "green procurement", "responsible sourcing", "ethical sourcing", "supply chain"},
+    "biodiversity": {"biodiversity", "ecosystem", "habitat", "species", "flora", "fauna"},
+    "deforestation": {"deforestation", "reforestation", "afforestation", "tree planting", "forest"},
+    "animal_welfare": {"animal welfare", "animal cruelty", "animal rights", "cruelty free"},
+    "environmental_compliance": {"environmental compliance", "environmental law", "environmental regulation", "regulatory compliance", "legal compliance"},
+    "environmental_governance": {"governance", "environmental policy", "environmental management system", "ems", "iso 14001"},
+    "green_claims": {"green claim", "eco label", "eco-label", "green certification", "environmental claim"},
+    "community_engagement": {"community engagement", "community", "local community", "social responsibility", "stakeholder"},
+    "conservation": {"conservation", "protect", "preserve", "natural resource"},
+    "resource_efficiency": {"resource efficiency", "resource management", "circular economy", "zero waste"},
+}
+
+
+# =========================================================
+# COMMITMENT PHRASES
+# =========================================================
+
+COMMITMENT_PHRASES = [
+    "we are committed to",
+    "we will",
+    "we aim to",
+    "we seek to",
+    "we promote",
+    "we support",
+    "we encourage",
+    "we comply",
+    "we strive to",
+    "we intend to",
+    "we pledge to",
+    "we are dedicated to",
+    "we are determined to",
+    "we shall",
+    "we are focused on",
+]
+
+
+# =========================================================
+# DOCUMENT TYPE KEYWORDS
+# =========================================================
+
+DOC_TYPE_KEYWORDS: Dict[str, Set[str]] = {
+    "environmental_policy": {"environmental policy", "environment policy", "environmental management policy"},
+    "sustainability_policy": {"sustainability policy", "sustainable policy", "sustainability commitment", "sustainability statement"},
+    "sustainability_report": {"sustainability report", "sustainability assessment", "environmental report", "esg report", "sustainability disclosure"},
+    "waste_evidence": {"waste collection", "waste receipt", "waste record", "waste disposal", "waste management record"},
+    "water_evidence": {"water bill", "water consumption", "water meter", "water statement", "water usage"},
+    "energy_evidence": {"electricity bill", "energy bill", "energy consumption", "power bill", "electricity statement"},
+    "bill_or_invoice": {"invoice", "bill", "receipt", "statement", "amount due", "total amount", "payment"},
+}
 
 def clean_text(raw: str) -> str:
     """Normalize extracted text while preserving useful content."""
@@ -539,57 +625,427 @@ def extract_image(buf: bytes) -> Dict:
 
 
 # =========================================================
-# STRUCTURED SUMMARY
+# DOCUMENT TYPE CLASSIFICATION
+# =========================================================
+
+def classify_document_type(text: str, file_name: str) -> str:
+    """Classify document using deterministic keyword matching."""
+
+    lowered = text.lower()
+    fn_lower = file_name.lower()
+
+    # Check filename first for strong signals
+    if "environmental policy" in fn_lower or "env_policy" in fn_lower:
+        return "environmental_policy"
+    if "sustainability policy" in fn_lower or "sustain_policy" in fn_lower:
+        return "sustainability_policy"
+    if "sustainability report" in fn_lower or "esg_report" in fn_lower:
+        return "sustainability_report"
+
+    # Score each type by keyword hits
+    scores: Dict[str, int] = {}
+    for doc_type, keywords in DOC_TYPE_KEYWORDS.items():
+        score = sum(
+            1 for kw in keywords if kw in lowered
+        )
+        if score > 0:
+            scores[doc_type] = score
+
+    if not scores:
+        return "general_evidence"
+
+    # Policy/report types take priority over bill_or_invoice
+    # when they score equally or higher
+    policy_types = {
+        "environmental_policy",
+        "sustainability_policy",
+        "sustainability_report",
+    }
+
+    best_type = max(scores, key=lambda k: scores[k])
+    best_score = scores[best_type]
+
+    # If a policy type has at least 1 hit and bill also has hits,
+    # prefer policy when policy score >= bill score
+    if best_type in policy_types:
+        return best_type
+
+    # Check if any policy type also matches
+    for pt in policy_types:
+        if pt in scores and scores[pt] >= best_score:
+            return pt
+
+    return best_type
+
+
+# =========================================================
+# TITLE DETECTION
+# =========================================================
+
+NUMBERED_HEADING_PATTERN = re.compile(
+    r"^\s*(?:\d+(?:\.\d+)*)[.)]\s+(.+)$"
+)
+
+
+def detect_title(text: str, file_name: str) -> str:
+    """Detect document title from first-page headings or filename."""
+
+    lines = [
+        line.strip()
+        for line in text.split("\n")
+        if line.strip()
+        and not NOISE_LINE_PATTERN.fullmatch(line.strip())
+    ]
+
+    if not lines:
+        # Fall back to filename without extension
+        return Path(file_name).stem.replace("_", " ").title()
+
+    # Strategy 1: First meaningful line that looks like a title
+    # (short, not a sentence, possibly title-case or uppercase)
+    for line in lines[:10]:
+        stripped = line.strip()
+
+        # Skip lines that are clearly body text (too long or ends with period)
+        if len(stripped) > 120 or stripped.endswith("."):
+            continue
+
+        # Skip numbered headings for title (we capture those as sections)
+        if NUMBERED_HEADING_PATTERN.match(stripped):
+            continue
+
+        # Uppercase or title-case short line = likely title
+        if len(stripped) >= 5 and (
+            stripped.isupper()
+            or stripped.istitle()
+            or sum(1 for c in stripped if c.isupper()) > len(stripped) * 0.3
+        ):
+            return stripped
+
+    # Strategy 2: First non-numbered meaningful line
+    for line in lines[:5]:
+        stripped = line.strip()
+        if not NUMBERED_HEADING_PATTERN.match(stripped) and len(stripped) >= 5:
+            if len(stripped) <= 120:
+                return stripped
+
+    # Strategy 3: Filename
+    return Path(file_name).stem.replace("_", " ").title()
+
+
+# =========================================================
+# ORGANIZATION DETECTION
+# =========================================================
+
+ORG_NAME_PATTERN = re.compile(
+    r"\b(?:hotel|resort|villa|lodge|guest\s*house|homestay|boutique|eco\s*lodge|company|organization|organisation|property|establishment)\s+([A-Z][A-Za-z0-9\s&'.,-]{2,60})"
+)
+
+
+def detect_organization(text: str, key_values: Dict[str, str]) -> str:
+    """Extract organization/hotel/company name when clearly present."""
+
+    # Check key-value fields first
+    org_keys = [
+        "hotel_name", "property_name", "organization",
+        "organisation", "company", "company_name",
+        "customer_name", "establishment", "name",
+    ]
+    for k in org_keys:
+        if k in key_values and key_values[k]:
+            return key_values[k]
+
+    # Search in text
+    m = ORG_NAME_PATTERN.search(text)
+    if m:
+        return m.group(1).strip()
+
+    # Look for ALL-CAPS lines that look like organization names
+    for line in text.split("\n"):
+        line = line.strip()
+        if len(line) > 5 and line.isupper() and any(
+            w in line.lower()
+            for w in ["hotel", "resort", "villa", "lodge", "company", "group"]
+        ):
+            return line
+
+    return ""
+
+
+# =========================================================
+# SUSTAINABILITY TOPICS DETECTION
+# =========================================================
+
+def detect_sustainability_topics(text: str) -> List[str]:
+    """Detect sustainability topics using rule-based keyword groups."""
+
+    lowered = text.lower()
+    found = []
+
+    for topic, keywords in SUSTAINABILITY_TOPICS.items():
+        for kw in keywords:
+            if kw in lowered:
+                found.append(topic)
+                break
+
+    return sorted(set(found))
+
+
+# =========================================================
+# POLICY SECTIONS DETECTION
+# =========================================================
+
+# Keywords that indicate a sustainability-related heading
+SECTION_KEYWORDS = {
+    "carbon", "emission", "energy", "water", "waste", "recycling",
+    "procurement", "biodiversity", "deforestation", "forest",
+    "compliance", "governance", "engagement", "community",
+    "conservation", "resource", "climate", "environment",
+    "sustainability", "sustainable", "policy", "introduction",
+    "objective", "commitment", "scope", "purpose", "responsibility",
+    "monitoring", "reporting", "review", "animal welfare",
+}
+
+
+def detect_policy_sections(text: str) -> List[Dict]:
+    """Detect meaningful headings/sections in policy documents."""
+
+    lines = text.split("\n")
+    sections = []
+    seen = set()
+
+    for line in lines:
+        stripped = line.strip()
+
+        if not stripped or len(stripped) < 3:
+            continue
+
+        if NOISE_LINE_PATTERN.fullmatch(stripped):
+            continue
+
+        matched = False
+        section_title = None
+        section_number = None
+
+        # 1. Numbered headings: "1. Title", "2.1 Title", "3) Title"
+        m = NUMBERED_HEADING_PATTERN.match(stripped)
+        if m:
+            section_title = m.group(1).strip()
+            section_number = re.match(
+                r"\s*(\d+(?:\.\d+)*)", stripped
+            ).group(1)
+            matched = True
+
+        # 2. Uppercase headings (not too long, not a full sentence)
+        if not matched:
+            if (
+                len(stripped) >= 4
+                and len(stripped) <= 80
+                and stripped.isupper()
+                and not stripped.endswith(".")
+                and sum(1 for c in stripped if c.isalpha()) > 2
+            ):
+                section_title = stripped
+                matched = True
+
+        # 3. Short standalone headings that look like titles
+        # (title-case, short, no ending period, contains section keyword)
+        if not matched:
+            if (
+                len(stripped) >= 4
+                and len(stripped) <= 80
+                and not stripped.endswith(".")
+                and not stripped.endswith(",")
+                and stripped.istitle()
+            ):
+                lowered = stripped.lower()
+                if any(kw in lowered for kw in SECTION_KEYWORDS):
+                    section_title = stripped
+                    matched = True
+
+        # 4. Heading followed by content pattern (Title:\n body text)
+        # Already handled by uppercase/title-case checks above
+
+        if matched and section_title:
+            # Filter out body sentences disguised as headings
+            word_count = len(section_title.split())
+            if word_count > 15:
+                continue
+
+            # Deduplicate by normalized title
+            norm = section_title.lower().strip()
+            if norm in seen:
+                continue
+            seen.add(norm)
+
+            entry: Dict[str, str] = {"heading": section_title}
+            if section_number:
+                entry["number"] = section_number
+
+            sections.append(entry)
+
+    return sections[:30]
+
+
+# =========================================================
+# KEY COMMITMENTS EXTRACTION
+# =========================================================
+
+def extract_key_commitments(text: str) -> List[str]:
+    """Extract sentences containing commitment phrases."""
+
+    # Split into sentences (handle common sentence boundaries)
+    # Preserve the original text as-is
+    sentences = re.split(
+        r"(?<=[.!?])\s+(?=[A-Z])",
+        text,
+    )
+
+    # Also check across newlines — join lines first for multi-line sentences
+    # But also check line-by-line for commitment phrases
+    all_sentences = list(sentences)
+
+    # Also check joined lines for commitments that span newlines
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line:
+            i += 1
+            continue
+        # Check if this line starts a commitment
+        lowered_line = line.lower()
+        if any(line.lower().startswith(p) for p in COMMITMENT_PHRASES):
+            # Collect the full sentence — may span multiple lines
+            full = line
+            j = i + 1
+            while j < len(lines) and not lines[j].strip().endswith("."):
+                full += " " + lines[j].strip()
+                j += 1
+                if j - i > 5:  # safety limit
+                    break
+            if j < len(lines) and lines[j].strip():
+                full += " " + lines[j].strip()
+            all_sentences.append(full)
+            i = j + 1
+            continue
+        i += 1
+
+    commitments = []
+    seen = set()
+
+    for sentence in all_sentences:
+        stripped = sentence.strip()
+        if not stripped or len(stripped) < 10:
+            continue
+
+        lowered = stripped.lower()
+
+        for phrase in COMMITMENT_PHRASES:
+            if phrase in lowered:
+                # Clean up whitespace
+                cleaned_sentence = " ".join(stripped.split())
+                # Cap length
+                if len(cleaned_sentence) > 300:
+                    cleaned_sentence = cleaned_sentence[:297] + "..."
+
+                norm = cleaned_sentence.lower().strip()
+                if norm not in seen:
+                    seen.add(norm)
+                    commitments.append(cleaned_sentence)
+                break
+
+    return commitments[:20]
+
+
+# =========================================================
+# DOCUMENT-TYPE-AWARE SUMMARY
 # =========================================================
 
 def build_summary(
     key_values: Dict[str, str],
     measurements: List[Dict],
     financials: List[Dict],
+    document_type: str,
+    organization: str,
+    policy_sections: List[Dict],
+    sustainability_topics: List[str],
+    key_commitments: List[str],
 ) -> str:
-    """Build a short human-readable summary from extracted fields."""
+    """Build a short human-readable summary, document-type aware."""
 
-    customer = (
-        key_values.get("customer_name")
-        or key_values.get("hotel_name")
-        or key_values.get("property_name")
-    )
+    # --- Bill/invoice summary (existing behavior) ---
+    bill_types = {"bill_or_invoice", "water_evidence", "energy_evidence"}
 
-    billing_period = key_values.get("billing_period")
+    if document_type in bill_types:
+        customer = (
+            key_values.get("customer_name")
+            or key_values.get("hotel_name")
+            or key_values.get("property_name")
+        )
+        billing_period = key_values.get("billing_period")
+        energy = (
+            key_values.get("energy_consumed")
+            or key_values.get("total_consumption")
+        )
 
-    energy = (
-        key_values.get("energy_consumed")
-        or key_values.get("total_consumption")
-    )
+        total_due = None
+        for item in financials:
+            label = (item.get("label") or "").lower()
+            if "total amount due" in label:
+                currency = item.get("currency", "INR")
+                total_due = f"{currency} {item['amount']:,.2f}"
+                break
 
-    total_due = None
+        parts = []
+        if customer:
+            parts.append(f"Bill for {customer}")
+        if billing_period:
+            parts.append(f"covering {billing_period}")
+        if energy:
+            parts.append(f"with energy consumption of {energy}")
+        if total_due:
+            parts.append(f"and total amount due of {total_due}")
+        if parts:
+            return " ".join(parts) + "."
 
-    for item in financials:
-        label = (item.get("label") or "").lower()
+        return "Document containing extracted billing information."
 
-        if "total amount due" in label:
-            currency = item.get("currency", "INR")
-            total_due = f"{currency} {item['amount']:,.2f}"
-            break
-
+    # --- Policy/report summary (new behavior) ---
     parts = []
 
-    if customer:
-        parts.append(f"Bill for {customer}")
+    type_labels = {
+        "environmental_policy": "Environmental Policy",
+        "sustainability_policy": "Sustainability Policy",
+        "sustainability_report": "Sustainability Report",
+        "waste_evidence": "Waste Evidence",
+        "general_evidence": "Evidence Document",
+    }
+    type_label = type_labels.get(document_type, "Document")
+    parts.append(type_label)
 
-    if billing_period:
-        parts.append(f"covering {billing_period}")
+    if organization:
+        parts.append(f"from {organization}")
 
-    if energy:
-        parts.append(f"with energy consumption of {energy}")
+    section_count = len(policy_sections)
+    if section_count > 0:
+        parts.append(f"with {section_count} policy section{'s' if section_count != 1 else ''}")
 
-    if total_due:
-        parts.append(f"and total amount due of {total_due}")
+    topic_count = len(sustainability_topics)
+    if topic_count > 0:
+        topics_str = ", ".join(sustainability_topics[:5])
+        if topic_count > 5:
+            topics_str += f" and {topic_count - 5} more"
+        parts.append(f"covering topics: {topics_str}")
 
-    if parts:
+    commit_count = len(key_commitments)
+    if commit_count > 0:
+        parts.append(f"and {commit_count} key commitment{'s' if commit_count != 1 else ''}")
+
+    if len(parts) > 1:
         return " ".join(parts) + "."
 
-    return "Document containing extracted billing information."
+    return f"{type_label} document containing extracted sustainability evidence."
 
 
 # =========================================================
@@ -622,9 +1078,20 @@ def build_structured_data(
         if len(line) > 20
     ][:8]
 
+    # --- New: document type, title, organization ---
+    document_type = classify_document_type(text, file_name)
+    title = detect_title(text, file_name)
+    organization = detect_organization(text, key_values)
+
+    # --- New: sustainability topics, policy sections, commitments ---
+    sustainability_topics = detect_sustainability_topics(text)
+    policy_sections = detect_policy_sections(text)
+    key_commitments = extract_key_commitments(text)
+
+    # --- Expanded relevant terms (energy + water + sustainability) ---
     relevant = find_relevant_terms(
         text,
-        ENERGY_TERMS | WATER_TERMS,
+        ALL_RELEVANT_TERMS,
     )
 
     redundant_keys = {
@@ -641,10 +1108,16 @@ def build_structured_data(
         if key not in redundant_keys
     }
 
+    # --- Document-type-aware summary ---
     summary = build_summary(
         key_values,
         measurements,
         financials,
+        document_type,
+        organization,
+        policy_sections,
+        sustainability_topics,
+        key_commitments,
     )
 
     return {
@@ -653,12 +1126,18 @@ def build_structured_data(
             "file_type": file_type,
             "page_count": metadata["page_count"],
         },
+        "document_type": document_type,
+        "title": title,
+        "organization": organization,
         "summary": summary,
         "key_data": key_values,
         "measurements": measurements,
         "financials": financials,
         "dates": dates,
         "relevant_terms": relevant,
+        "sustainability_topics": sustainability_topics,
+        "policy_sections": policy_sections,
+        "key_commitments": key_commitments,
         "key_excerpts": key_excerpts,
         "metadata": {
             "word_count": metadata["word_count"],
@@ -755,7 +1234,7 @@ async def process_document(
 
     relevant_detected_terms = find_relevant_terms(
         cleaned,
-        ENERGY_TERMS | WATER_TERMS,
+        ALL_RELEVANT_TERMS,
     )
 
     # -----------------------------------------------------
