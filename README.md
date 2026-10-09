@@ -125,6 +125,12 @@ venv\Scripts\activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 uvicorn app:app --reload --port 8000
+
+to run evaluation
+cd evaluation
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
 The processor runs on http://localhost:8000.
