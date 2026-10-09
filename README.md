@@ -119,8 +119,10 @@ Required environment variables:
 
 ```bash
 cd processor
-python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
+py -3.12 --version
+py -3.12 -m venv venv
+venv\Scripts\activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 uvicorn app:app --reload --port 8000
 ```
