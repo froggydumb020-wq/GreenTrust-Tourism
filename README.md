@@ -131,6 +131,8 @@ cd evaluation
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+python build_ground_truth.py
+python evaluate.py
 ```
 
 The processor runs on http://localhost:8000.
